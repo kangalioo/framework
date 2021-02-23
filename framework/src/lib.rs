@@ -185,3 +185,19 @@ impl<D, E> Framework<D, E> {
         Ok((ctx, func))
     }
 }
+
+// Required as a reliable way for command_attr to know the data and error types
+// (see https://github.com/serenity-rs/framework/issues/27)
+#[doc(hidden)]
+pub trait _DataErrorHack {
+    type D;
+    type E;
+}
+impl<D, E> _DataErrorHack for Framework<D, E> {
+    type D = D;
+    type E = E;
+}
+impl<D, E> _DataErrorHack for Context<D, E> {
+    type D = D;
+    type E = E;
+}

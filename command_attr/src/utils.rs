@@ -4,10 +4,8 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
-use syn::{Attribute, Error, FnArg, GenericArgument, Lit, LitStr, Meta};
-use syn::{NestedMeta, Pat, PatType, Path, PathArguments, Result, Signature, Token, Type};
-
-use crate::paths::{default_data_type, default_error_type};
+use syn::{Attribute, Error, FnArg, Lit, LitStr, Meta};
+use syn::{NestedMeta, Pat, PatType, Path, Result, Signature, Token, Type};
 
 pub struct AttributeArgs(pub Vec<String>);
 
@@ -166,37 +164,7 @@ pub fn parse_bool(attr: &Attr) -> Result<bool> {
     })
 }
 
-pub fn parse_generics(sig: &Signature) -> Result<(Ident, Ident, Box<Type>, Box<Type>)> {
-    let (ctx, msg) = get_first_two_parameters(sig)?;
-
-    let msg_indent = get_ident(&get_pat_type(msg)?.pat)?;
-
-    let ctx_binding = get_pat_type(ctx)?;
-    let ctx_ident = get_ident(&ctx_binding.pat)?;
-    let path = get_path(&ctx_binding.ty)?;
-    let mut arguments = get_generic_arguments(path)?;
-
-    let default_data = default_data_type();
-    let default_error = default_error_type();
-
-    let data = match arguments.next() {
-        Some(GenericArgument::Lifetime(_)) => match arguments.next() {
-            Some(arg) => get_generic_type(arg)?,
-            None => default_data,
-        },
-        Some(arg) => get_generic_type(arg)?,
-        None => default_data,
-    };
-
-    let error = match arguments.next() {
-        Some(arg) => get_generic_type(arg)?,
-        None => default_error,
-    };
-
-    Ok((ctx_ident, msg_indent, data, error))
-}
-
-fn get_first_two_parameters(sig: &Signature) -> Result<(&FnArg, &FnArg)> {
+pub fn get_first_two_parameters(sig: &Signature) -> Result<(&FnArg, &FnArg)> {
     let mut parameters = sig.inputs.iter();
     match (parameters.next(), parameters.next()) {
         (Some(first), Some(second)) => Ok((first, second)),
@@ -226,25 +194,5 @@ pub fn get_path(t: &Type) -> Result<&Path> {
         Type::Path(p) => Ok(&p.path),
         Type::Reference(r) => get_path(&r.elem),
         _ => Err(Error::new(t.span(), "parameter must be a path to a context type")),
-    }
-}
-
-fn get_generic_arguments(path: &Path) -> Result<impl Iterator<Item = &GenericArgument> + '_> {
-    match &path.segments.last().unwrap().arguments {
-        PathArguments::None => Ok(Vec::new().into_iter()),
-        PathArguments::AngleBracketed(arguments) => {
-            Ok(arguments.args.iter().collect::<Vec<_>>().into_iter())
-        },
-        _ => Err(Error::new(
-            path.span(),
-            "context type cannot have generic parameters in parenthesis",
-        )),
-    }
-}
-
-fn get_generic_type(arg: &GenericArgument) -> Result<Box<Type>> {
-    match arg {
-        GenericArgument::Type(t) => Ok(Box::new(t.clone())),
-        _ => Err(Error::new(arg.span(), "generic parameter must be a type")),
     }
 }

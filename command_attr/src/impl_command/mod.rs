@@ -19,12 +19,20 @@ pub fn impl_command(attr: TokenStream, input: TokenStream) -> Result<TokenStream
         parse2::<AttributeArgs>(attr)?.0
     };
 
-    let (ctx_name, msg_name, data, error) = utils::parse_generics(&fun.sig)?;
+    let (ctx_param, msg_param) = utils::get_first_two_parameters(&fun.sig)?;
+    let ctx_param = utils::get_pat_type(&ctx_param)?.clone();
+    let msg_param = utils::get_pat_type(&msg_param)?.clone();
+
     let options = Options::parse(&mut fun.attrs)?;
 
-    parse_arguments(ctx_name, msg_name, &mut fun, &options)?;
+    inject_argument_parsing_code(
+        utils::get_ident(&ctx_param.pat)?,
+        utils::get_ident(&msg_param.pat)?,
+        &mut fun,
+        &options,
+    )?;
 
-    let builder_fn = builder_fn(&data, &error, &mut fun, names, &options);
+    let builder_fn = builder_fn(&ctx_param.ty, &mut fun, names, &options);
 
     let hook_macro = paths::hook_macro();
 
@@ -39,9 +47,10 @@ pub fn impl_command(attr: TokenStream, input: TokenStream) -> Result<TokenStream
     Ok(result)
 }
 
+/// Replace the passed in function with a "builder function" that points to the renamed original
+/// function
 fn builder_fn(
-    data: &Type,
-    error: &Type,
+    ctx_ty: &Type,
     function: &mut ItemFn,
     mut names: Vec<String>,
     options: &Options,
@@ -57,7 +66,7 @@ fn builder_fn(
     function.sig.ident = function_name.clone();
 
     let command_builder = paths::command_builder_type();
-    let command = paths::command_type(data, error);
+    let command = paths::command_type(ctx_ty);
 
     let vis = &function.vis;
     let external = &function.attrs;
@@ -74,52 +83,56 @@ fn builder_fn(
     }
 }
 
-fn parse_arguments(
+// Injects a code block at the top of the user-written command function that parses the command
+// parameters from the FrameworkContext and Message function arguments
+fn inject_argument_parsing_code(
     ctx_name: Ident,
     msg_name: Ident,
     function: &mut ItemFn,
     options: &Options,
 ) -> Result<()> {
     let mut arguments = Vec::new();
-
     while function.sig.inputs.len() > 2 {
         let argument = function.sig.inputs.pop().unwrap().into_value();
 
         arguments.push(Argument::new(argument)?);
     }
 
-    if !arguments.is_empty() {
-        arguments.reverse();
-
-        check_arguments(&arguments)?;
-
-        let delimiter = options.delimiter.as_ref().map_or(" ", String::as_str);
-        let asegsty = paths::argument_segments_type();
-
-        let b = &function.block;
-
-        let argument_names = arguments.iter().map(|arg| &arg.name).collect::<Vec<_>>();
-        let argument_tys = arguments.iter().map(|arg| &arg.ty).collect::<Vec<_>>();
-        let argument_kinds = arguments.iter().map(|arg| &arg.kind).collect::<Vec<_>>();
-
-        function.block = parse2(quote! {{
-            let (#(#argument_names),*) = {
-                // Place the segments into its scope to allow mutation of `Context::args`
-                // afterwards, as `ArgumentSegments` holds a reference to the source string.
-                let mut __args = #asegsty::new(&#ctx_name.args, #delimiter);
-
-                #(let #argument_names: #argument_tys = #argument_kinds(
-                    &#ctx_name.serenity_ctx,
-                    &#msg_name,
-                    &mut __args
-                ).await?;)*
-
-                (#(#argument_names),*)
-            };
-
-            #b
-        }})?;
+    // If this command has no parameters, don't bother injecting any parsing code
+    if arguments.is_empty() {
+        return Ok(());
     }
+
+    arguments.reverse();
+
+    validate_arguments_order(&arguments)?;
+
+    let delimiter = options.delimiter.as_ref().map_or(" ", String::as_str);
+    let asegsty = paths::argument_segments_type();
+
+    let b = &function.block;
+
+    let argument_names = arguments.iter().map(|arg| &arg.name).collect::<Vec<_>>();
+    let argument_tys = arguments.iter().map(|arg| &arg.ty).collect::<Vec<_>>();
+    let argument_kinds = arguments.iter().map(|arg| &arg.kind).collect::<Vec<_>>();
+
+    function.block = parse2(quote! {{
+        let (#(#argument_names),*) = {
+            // Place the segments into its scope to allow mutation of `Context::args`
+            // afterwards, as `ArgumentSegments` holds a reference to the source string.
+            let mut __args = #asegsty::new(&#ctx_name.args, #delimiter);
+
+            #(let #argument_names: #argument_tys = #argument_kinds(
+                &#ctx_name.serenity_ctx,
+                &#msg_name,
+                &mut __args
+            ).await?;)*
+
+            (#(#argument_names),*)
+        };
+
+        #b
+    }})?;
 
     Ok(())
 }
@@ -134,7 +147,7 @@ fn parse_arguments(
 /// - a list of arguments that only has one rest argument parameter, if present.
 /// - a list of arguments that only has one variadic argument parameter or one rest
 /// argument parameter.
-fn check_arguments(args: &[Argument]) -> Result<()> {
+fn validate_arguments_order(args: &[Argument]) -> Result<()> {
     let mut last_arg: Option<&Argument> = None;
 
     for arg in args {

@@ -19,10 +19,11 @@ pub fn impl_check(attr: TokenStream, input: TokenStream) -> Result<TokenStream> 
         parse2::<syn::LitStr>(attr)?.value()
     };
 
-    let (_, _, data, error) = utils::parse_generics(&fun.sig)?;
+    let (ctx_param, _msg_param) = utils::get_first_two_parameters(&fun.sig)?;
     let options = Options::parse(&mut fun.attrs)?;
 
-    let builder_fn = builder_fn(&data, &error, &mut fun, &name, &options);
+    let ctx_ty = *utils::get_pat_type(&ctx_param)?.ty.clone();
+    let builder_fn = builder_fn(&ctx_ty, &mut fun, &name, &options);
 
     let hook_macro = paths::hook_macro();
 
@@ -37,13 +38,7 @@ pub fn impl_check(attr: TokenStream, input: TokenStream) -> Result<TokenStream> 
     Ok(result)
 }
 
-fn builder_fn(
-    data: &Type,
-    error: &Type,
-    function: &mut ItemFn,
-    name: &str,
-    options: &Options,
-) -> TokenStream {
+fn builder_fn(ctx_ty: &Type, function: &mut ItemFn, name: &str, options: &Options) -> TokenStream {
     // Derive the name of the builder from the check function.
     // Prepend the check function's name with an underscore to avoid name
     // collisions.
@@ -52,7 +47,7 @@ fn builder_fn(
     function.sig.ident = function_name.clone();
 
     let check_builder = paths::check_builder_type();
-    let check = paths::check_type(data, error);
+    let check = paths::check_type(ctx_ty);
 
     let vis = &function.vis;
     let external = &function.attrs;

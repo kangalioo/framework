@@ -6,25 +6,12 @@ fn to_path(tokens: TokenStream) -> Path {
     parse2(tokens).unwrap()
 }
 
-fn to_type(tokens: TokenStream) -> Box<Type> {
-    parse2(tokens).unwrap()
-}
-
-pub fn default_data_type() -> Box<Type> {
-    to_type(quote! {
-        serenity_framework::DefaultData
-    })
-}
-
-pub fn default_error_type() -> Box<Type> {
-    to_type(quote! {
-        serenity_framework::DefaultError
-    })
-}
-
-pub fn command_type(data: &Type, error: &Type) -> Path {
+pub fn command_type(ctx: &Type) -> Path {
     to_path(quote! {
-        serenity_framework::command::Command<#data, #error>
+        serenity_framework::command::Command<
+            <#ctx as serenity_framework::_DataErrorHack>::D,
+            <#ctx as serenity_framework::_DataErrorHack>::E,
+        >
     })
 }
 
@@ -70,9 +57,12 @@ pub fn rest_argument_func() -> Path {
     })
 }
 
-pub fn check_type(data: &Type, error: &Type) -> Path {
+pub fn check_type(ctx: &Type) -> Path {
     to_path(quote! {
-        serenity_framework::check::Check<#data, #error>
+        serenity_framework::check::Check<
+            <#ctx as serenity_framework::_DataErrorHack>::D,
+            <#ctx as serenity_framework::_DataErrorHack>::E,
+        >
     })
 }
 
