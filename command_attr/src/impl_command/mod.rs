@@ -114,7 +114,7 @@ fn inject_argument_parsing_code(
 
     let argument_names = arguments.iter().map(|arg| &arg.name).collect::<Vec<_>>();
     let argument_tys = arguments.iter().map(|arg| &arg.ty).collect::<Vec<_>>();
-    let argument_kinds = arguments.iter().map(|arg| &arg.kind).collect::<Vec<_>>();
+    let argument_parsers = arguments.iter().map(|arg| &arg.parser).collect::<Vec<_>>();
 
     function.block = parse2(quote! {{
         let (#(#argument_names),*) = {
@@ -122,7 +122,7 @@ fn inject_argument_parsing_code(
             // afterwards, as `ArgumentSegments` holds a reference to the source string.
             let mut __args = #asegsty::new(&#ctx_name.args, #delimiter);
 
-            #(let #argument_names: #argument_tys = #argument_kinds(
+            #(let #argument_names: #argument_tys = #argument_parsers(
                 &#ctx_name.serenity_ctx,
                 &#msg_name,
                 &mut __args
@@ -152,7 +152,7 @@ fn validate_arguments_order(args: &[Argument]) -> Result<()> {
 
     for arg in args {
         if let Some(last_arg) = last_arg {
-            match (last_arg.kind.type_, arg.kind.type_) {
+            match (last_arg.parser.type_, arg.parser.type_) {
                 (ArgumentType::Optional, ArgumentType::Required) => {
                     return Err(Error::new(
                         last_arg.name.span(),
@@ -226,7 +226,7 @@ fn validate_arguments_order(args: &[Argument]) -> Result<()> {
 struct Argument {
     name: Ident,
     ty: Box<Type>,
-    kind: ArgumentMetadata,
+    parser: ArgumentParser,
 }
 
 impl Argument {
@@ -238,12 +238,12 @@ impl Argument {
         let ty = binding.ty.clone();
 
         let path = utils::get_path(&ty)?;
-        let kind = ArgumentMetadata::new(&binding.attrs, path)?;
+        let parser = ArgumentParser::new(&binding.attrs, path)?;
 
         Ok(Self {
             name,
             ty,
-            kind,
+            parser,
         })
     }
 }
@@ -257,12 +257,12 @@ enum ArgumentType {
 }
 
 #[derive(Clone, Copy)]
-struct ArgumentMetadata {
+struct ArgumentParser {
     type_: ArgumentType,
     use_parse_trait: bool,
 }
 
-impl ArgumentMetadata {
+impl ArgumentParser {
     fn new(attrs: &[Attribute], path: &Path) -> Result<Self> {
         let mut is_rest_argument = false;
         let mut use_parse_trait = false;
@@ -312,7 +312,7 @@ impl ArgumentMetadata {
     }
 }
 
-impl ToTokens for ArgumentMetadata {
+impl ToTokens for ArgumentParser {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let path = match (self.type_, self.use_parse_trait) {
             (ArgumentType::Required, false) => paths::required_argument_from_str_func(),
